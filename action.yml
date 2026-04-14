@@ -65,7 +65,7 @@ runs:
 
     - name: Install agent-debug
       shell: bash
-      run: pip install agent-debug --quiet
+      run: pip install ${{ github.action_path }} --quiet
 
     - name: Run agent-debug analysis
       shell: bash
