@@ -19,9 +19,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: |
-          pip install uv
-          uv pip install --system -e ".[dev]" 2>/dev/null || pip install -e ".[dev]" 2>/dev/null || pip install -e . pytest pytest-asyncio pytest-mock
+        run: pip install -e ".[dev]"
 
-      - name: Run tests (adapters only, no API key needed)
-        run: pytest tests/test_adapters/ tests/test_agents/ -v
+      - name: Run tests
+        run: python -m pytest tests/test_adapters/ tests/test_agents/ -v
