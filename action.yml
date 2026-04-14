@@ -1,0 +1,91 @@
+name: 'agent-debug'
+description: 'Automatically diagnose why your AI agent failed — root cause + fix suggestions'
+author: 'Viktorsdb'
+
+branding:
+  icon: 'search'
+  color: 'blue'
+
+inputs:
+  api_key:
+    description: |
+      Your LLM API key. Supports Anthropic, OpenAI, DeepSeek.
+      Example: ${{ secrets.ANTHROPIC_API_KEY }}
+    required: true
+
+  provider:
+    description: |
+      LLM provider to use for analysis.
+      Options: anthropic (default), openai, deepseek, ollama
+    required: false
+    default: 'anthropic'
+
+  model:
+    description: |
+      Model to use. Defaults to provider's recommended model.
+      Examples: claude-sonnet-4-6, gpt-4o, deepseek-chat
+    required: false
+    default: ''
+
+  base_url:
+    description: |
+      Custom API base URL (for third-party relays or self-hosted models).
+      Example: https://my-proxy.example.com/v1
+    required: false
+    default: ''
+
+  traces_dir:
+    description: |
+      Directory containing agent trace JSON files.
+      Files must end in .trace.json or .json
+    required: false
+    default: 'agent_traces'
+
+  github_token:
+    description: 'GitHub token for posting PR comments. Uses GITHUB_TOKEN by default.'
+    required: false
+    default: ${{ github.token }}
+
+  fail_on_severity:
+    description: |
+      Fail the action if any trace has severity >= this value (1-5).
+      Set to 0 to never fail. Default: 3
+    required: false
+    default: '3'
+
+outputs:
+  report_json:
+    description: 'Path to the full JSON report file'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install agent-debug
+      shell: bash
+      run: pip install agent-debug --quiet
+
+    - name: Run agent-debug analysis
+      shell: bash
+      env:
+        # Provider routing
+        AGENT_DEBUG_PROVIDER: ${{ inputs.provider }}
+
+        # API keys — set whichever matches your provider
+        ANTHROPIC_API_KEY: ${{ inputs.api_key }}
+        OPENAI_API_KEY: ${{ inputs.api_key }}
+        DEEPSEEK_API_KEY: ${{ inputs.api_key }}
+
+        # Optional overrides
+        ANTHROPIC_BASE_URL: ${{ inputs.base_url }}
+        OPENAI_BASE_URL: ${{ inputs.base_url }}
+
+        # GitHub context
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        TRACES_DIR: ${{ inputs.traces_dir }}
+        FAIL_ON_SEVERITY: ${{ inputs.fail_on_severity }}
+      run: python -m agent_debug.github_action

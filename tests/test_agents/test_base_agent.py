@@ -1,10 +1,10 @@
 """Tests for BaseAgent error handling — mocked, no real API calls."""
 
-import json
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from agent_debug.agents.base import BaseAgent, _try_extract_json
+from agent_debug.providers.base import LLMProvider
 
 
 # ─── _try_extract_json ────────────────────────────────────────────────────────
@@ -32,34 +32,29 @@ def test_extract_json_invalid_returns_none():
     assert result is None
 
 
-# ─── BaseAgent.parse_json with retry ─────────────────────────────────────────
+# ─── Mock provider ────────────────────────────────────────────────────────────
+
+class MockProvider(LLMProvider):
+    """Returns responses in order, then repeats the last one."""
+    def __init__(self, responses: list[str]):
+        self._responses = responses
+        self._idx = 0
+
+    def complete(self, prompt: str, system: str = "") -> tuple[str, int, int]:
+        text = self._responses[min(self._idx, len(self._responses) - 1)]
+        self._idx += 1
+        return text, 100, 50
+
 
 class ConcreteAgent(BaseAgent):
     """Minimal concrete agent for testing."""
     pass
 
 
-def _make_mock_client(responses: list[str]):
-    """Return a mock anthropic.Anthropic client that returns responses in order."""
-    client = MagicMock()
-    messages_mock = MagicMock()
-    client.messages = messages_mock
-
-    call_count = [0]
-    def create(**kwargs):
-        idx = min(call_count[0], len(responses) - 1)
-        call_count[0] += 1
-        msg = MagicMock()
-        msg.content = [MagicMock(text=responses[idx])]
-        msg.usage = MagicMock(input_tokens=100, output_tokens=50)
-        return msg
-    messages_mock.create = create
-    return client
-
+# ─── BaseAgent.parse_json with retry ─────────────────────────────────────────
 
 def test_parse_json_success_first_try():
-    client = _make_mock_client(['{"result": "ok"}'])
-    agent = ConcreteAgent(client)
+    agent = ConcreteAgent(MockProvider(['{"result": "ok"}']))
     result = agent.parse_json('{"result": "ok"}', "dummy prompt")
     assert result == {"result": "ok"}
 
@@ -67,21 +62,18 @@ def test_parse_json_success_first_try():
 def test_parse_json_retry_on_invalid():
     # parse_json receives the initial response as `text` (no API call for first attempt).
     # The retry is the first (and only) API call — it returns valid JSON.
-    client = _make_mock_client(['{"result": "ok"}'])
-    agent = ConcreteAgent(client)
+    agent = ConcreteAgent(MockProvider(['{"result": "ok"}']))
     result = agent.parse_json("not json", "dummy prompt")
     assert result == {"result": "ok"}
 
 
 def test_parse_json_raises_after_two_failures():
-    client = _make_mock_client(["not json", "still not json"])
-    agent = ConcreteAgent(client)
+    agent = ConcreteAgent(MockProvider(["not json", "still not json"]))
     with pytest.raises(ValueError, match="invalid JSON after retry"):
         agent.parse_json("not json", "dummy prompt")
 
 
 def test_last_cost_usd_calculated():
-    client = _make_mock_client(['{"x": 1}'])
-    agent = ConcreteAgent(client)
+    agent = ConcreteAgent(MockProvider(['{"x": 1}']))
     agent._sync_call("hello", "")
     assert agent.last_cost_usd > 0

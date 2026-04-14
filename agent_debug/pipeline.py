@@ -1,7 +1,5 @@
 """Sequential analysis pipeline: runs 4 agents in order to produce DiagnosisReport."""
 
-import anthropic
-
 from agent_debug.adapters import auto_parse
 from agent_debug.agents.fix_generator import FixGenerator
 from agent_debug.agents.pattern_classifier import PatternClassifier
@@ -15,22 +13,28 @@ from agent_debug.models.types import (
     NormalizedTrace,
     SeverityInput,
 )
+from agent_debug.providers.base import LLMProvider
 
 
 class DiagnosisPipeline:
     """Run all 4 analysis agents sequentially and return a DiagnosisReport.
 
     Usage:
+        # Auto-detect provider from env vars:
         pipeline = DiagnosisPipeline()
+
+        # Explicit provider:
+        from agent_debug.providers import get_provider
+        pipeline = DiagnosisPipeline(provider=get_provider("openai"))
+
         report = pipeline.run(raw_trace_dict)
     """
 
-    def __init__(self, client: anthropic.Anthropic | None = None):
-        _client = client or anthropic.Anthropic()
-        self.classifier = PatternClassifier(_client)
-        self.severity = SeverityEstimator(_client)
-        self.analyst = RootCauseAnalyst(_client)
-        self.fix_gen = FixGenerator(_client)
+    def __init__(self, provider: LLMProvider | None = None):
+        self.classifier = PatternClassifier(provider)
+        self.severity = SeverityEstimator(provider)
+        self.analyst = RootCauseAnalyst(provider)
+        self.fix_gen = FixGenerator(provider)
 
     def run(self, raw: dict) -> DiagnosisReport:
         """Parse raw trace and run full analysis pipeline.
@@ -52,17 +56,14 @@ class DiagnosisPipeline:
         """Run pipeline on a pre-normalized trace."""
         total_cost = 0.0
 
-        # Step 1: classify failure pattern
         classification = self.classifier.classify(ClassifierInput(trace=trace))
         total_cost += self.classifier.last_cost_usd
 
-        # Step 2: estimate severity
         severity_out = self.severity.estimate(
             SeverityInput(trace=trace, category=classification["category"])
         )
         total_cost += self.severity.last_cost_usd
 
-        # Step 3: root cause analysis
         root_cause = self.analyst.analyze(
             AnalystInput(
                 trace=trace,
@@ -72,7 +73,6 @@ class DiagnosisPipeline:
         )
         total_cost += self.analyst.last_cost_usd
 
-        # Step 4: fix suggestions
         fixes = self.fix_gen.generate(
             FixInput(
                 trace=trace,
