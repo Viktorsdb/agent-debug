@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent-debug"
+version = "0.1.0"
+description = "Diagnose why your AI agent failed. Root cause analysis + fix suggestions."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["llm", "agent", "debugging", "eval", "testing"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Debuggers",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "anthropic>=0.40.0",
+    "typer>=0.12.0",
+    "rich>=13.0.0",
+    "pydantic>=2.0.0",
+]
+
+[project.scripts]
+agent-debug = "agent_debug.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/Viktorsdb/agent-debug"
+Repository = "https://github.com/Viktorsdb/agent-debug"
+Issues = "https://github.com/Viktorsdb/agent-debug/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agent_debug"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-mock>=3.12.0",
+]

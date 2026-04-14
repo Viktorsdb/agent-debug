@@ -1,0 +1,78 @@
+{
+  "trace_id": "test-openai-001",
+  "task_description": "Read the file report.txt and summarize it",
+  "tool_definitions": [
+    {
+      "type": "function",
+      "function": {
+        "name": "read_file",
+        "description": "Read a local file by path",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string", "description": "Absolute or relative file path"}
+          },
+          "required": ["path"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "web_search",
+        "description": "Search the web for information",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {"type": "string", "description": "Search query"}
+          },
+          "required": ["query"]
+        }
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a helpful assistant with access to tools."
+    },
+    {
+      "role": "user",
+      "content": "Read the file report.txt and summarize it"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_abc123",
+          "type": "function",
+          "function": {
+            "name": "web_search",
+            "arguments": "{\"query\": \"report.txt contents\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_abc123",
+      "content": "No results found for 'report.txt contents'"
+    },
+    {
+      "role": "assistant",
+      "content": "I searched the web but couldn't find the contents of report.txt. The file may be local only."
+    }
+  ],
+  "choices": [
+    {
+      "message": {
+        "role": "assistant",
+        "content": "I searched the web but couldn't find the contents of report.txt. The file may be local only."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "succeeded": false,
+  "metadata": {}
+}

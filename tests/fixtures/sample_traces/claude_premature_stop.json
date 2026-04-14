@@ -1,0 +1,69 @@
+{
+  "trace_id": "test-claude-001",
+  "task_description": "List all Python files in /src and count lines in each",
+  "system_prompt": "You are a code analysis assistant. Complete all requested tasks fully.",
+  "tool_definitions": [
+    {
+      "name": "bash",
+      "description": "Run a bash command",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "command": {"type": "string"}
+        },
+        "required": ["command"]
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": "List all Python files in /src and count lines in each"
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01",
+          "name": "bash",
+          "input": {"command": "find /src -name '*.py'"}
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01",
+          "content": "/src/main.py\n/src/utils.py\n/src/models.py"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "I found 3 Python files in /src: main.py, utils.py, and models.py."
+        }
+      ]
+    }
+  ],
+  "final_response": {
+    "stop_reason": "end_turn",
+    "content": [
+      {
+        "type": "text",
+        "text": "I found 3 Python files in /src: main.py, utils.py, and models.py."
+      }
+    ],
+    "usage": {
+      "input_tokens": 450,
+      "output_tokens": 35
+    }
+  },
+  "succeeded": false,
+  "metadata": {}
+}

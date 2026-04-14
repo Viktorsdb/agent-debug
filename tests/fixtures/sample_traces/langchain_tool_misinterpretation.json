@@ -1,0 +1,31 @@
+{
+  "trace_id": "test-langchain-001",
+  "task_description": "Get the current stock price of AAPL",
+  "system_prompt": "You are a financial assistant.",
+  "tool_definitions": [
+    {
+      "name": "get_stock_price",
+      "description": "Get current stock price for a ticker symbol"
+    }
+  ],
+  "input": "Get the current stock price of AAPL",
+  "intermediate_steps": [
+    [
+      {
+        "tool": "get_stock_price",
+        "tool_input": "AAPL stock"
+      },
+      "Error: Invalid ticker format. Use symbol only (e.g. 'AAPL' not 'AAPL stock')"
+    ],
+    [
+      {
+        "tool": "get_stock_price",
+        "tool_input": "AAPL stock"
+      },
+      "Error: Invalid ticker format. Use symbol only (e.g. 'AAPL' not 'AAPL stock')"
+    ]
+  ],
+  "output": "The current stock price of AAPL is $182.50.",
+  "succeeded": false,
+  "metadata": {}
+}
