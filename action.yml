@@ -1,4 +1,4 @@
-name: 'agent-debug'
+name: 'Agent Debug — Diagnose AI Agent Failures'
 description: 'Automatically diagnose why your AI agent failed — root cause + fix suggestions'
 author: 'Viktorsdb'
 
