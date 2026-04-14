@@ -27,6 +27,7 @@ Think of it as **Sentry for agents** — tells you not just *what* broke, but *w
 - 🔍 **Root cause analysis** — pinpoints the exact step where things went wrong
 - 🏷️ **15 failure subcategories** — not just "it failed", but *wrong_tool.scope_confusion* or *hallucination.missing_retrieval*
 - 🔧 **Before/after fix diffs** — copy-paste ready changes to your system prompt or tool definitions
+- 📸 **Auto-capture** — decorator, patch, or context manager: no manual JSON export needed
 - 🤖 **GitHub Action** — auto-comments on PRs when your agent tests fail
 - 🔌 **Multi-provider** — bring your own API key: Anthropic, OpenAI, DeepSeek, or Ollama (local/free)
 - 📦 **Multi-SDK** — supports OpenAI, Claude SDK, and LangChain trace formats
@@ -43,7 +44,53 @@ Requires Python 3.11+.
 
 ---
 
-## Quickstart
+## Auto-capture (no JSON export needed)
+
+Three ways to record traces automatically — pick whichever fits your style.
+
+### Option 1: Decorator
+
+```python
+import agent_debug
+
+@agent_debug.trace(output="agent_traces/my_run.json")
+def run_my_agent(task: str):
+    client = openai.OpenAI()
+    # your agent code — nothing else changes
+    response = client.chat.completions.create(...)
+    return response
+```
+
+### Option 2: Patch (zero code changes)
+
+```python
+import agent_debug
+
+agent_debug.patch_openai()   # add this one line
+
+# everything below stays exactly the same
+client = openai.OpenAI()
+response = client.chat.completions.create(...)
+
+agent_debug.save_trace("agent_traces/run.json")
+```
+
+### Option 3: Context manager
+
+```python
+import agent_debug
+
+# starts recording when entering the block, saves when exiting
+with agent_debug.capture("agent_traces/run.json"):
+    result = my_agent.run(task)
+# trace.json saved automatically
+```
+
+All three work with the GitHub Action — just point `traces_dir` at your output folder.
+
+---
+
+## Quickstart (manual trace)
 
 ### 1. Set your API key
 
