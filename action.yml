@@ -8,9 +8,7 @@ branding:
 
 inputs:
   api_key:
-    description: |
-      Your LLM API key. Supports Anthropic, OpenAI, DeepSeek.
-      Example: ${{ secrets.ANTHROPIC_API_KEY }}
+    description: 'Your LLM API key (Anthropic, OpenAI, or DeepSeek). Pass via secrets.'
     required: true
 
   provider:
