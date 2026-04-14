@@ -1,6 +1,6 @@
 # agent-debug
 
-**Diagnose why your AI agent failed.** Root cause analysis + concrete fix suggestions, in your terminal.
+**Diagnose why your AI agent failed.** Root cause analysis + concrete fix suggestions — in your terminal or automatically on every PR.
 
 ```
 $ agent-debug analyze trace.json
@@ -9,28 +9,27 @@ $ agent-debug analyze trace.json
   wrong_tool.scope_confusion  severity 3/5  confidence 95%
   The agent used web_search instead of read_file for a local file task.
 
-  Root Cause
-  Step 0 (tool_call)
-  The agent confused the scope of available tools by incorrectly assuming
-  'report.txt' was a web-accessible resource...
+  Root Cause  ·  Step 0 (tool_call)
+  The agent confused tool scope — it assumed 'report.txt' was a web resource
+  instead of using the local read_file tool available to it.
 
-  Fix #1  target: system_prompt  confidence 92%
+  Fix #1  system_prompt  ·  92% confidence
   Before: "You are a helpful assistant with access to tools."
-  After:  "...When given a task involving a specific file (e.g., 'read report.txt'),
-           always use a local file tool, NOT a web search."
+  After:  "...always use a local file tool for file tasks, NOT web_search."
 ```
+
+Think of it as **Sentry for agents** — tells you not just *what* broke, but *why* and *what to change*.
 
 ---
 
-## Why
+## Features
 
-Debugging a failed agent trace is painful. You stare at 50 lines of tool calls trying to figure out *why* it went wrong and *what to change*. `agent-debug` runs a multi-agent analysis pipeline on the trace and gives you:
-
-- **What failed** — one of 15 precise subcategories (not just "it broke")
-- **Why it failed** — root cause explanation pointing to the exact step
-- **How to fix it** — before/after diffs for your system prompt or tool definitions
-
-Think of it as **Sentry for agents**.
+- 🔍 **Root cause analysis** — pinpoints the exact step where things went wrong
+- 🏷️ **15 failure subcategories** — not just "it failed", but *wrong_tool.scope_confusion* or *hallucination.missing_retrieval*
+- 🔧 **Before/after fix diffs** — copy-paste ready changes to your system prompt or tool definitions
+- 🤖 **GitHub Action** — auto-comments on PRs when your agent tests fail
+- 🔌 **Multi-provider** — bring your own API key: Anthropic, OpenAI, DeepSeek, or Ollama (local/free)
+- 📦 **Multi-SDK** — supports OpenAI, Claude SDK, and LangChain trace formats
 
 ---
 
@@ -40,55 +39,112 @@ Think of it as **Sentry for agents**.
 pip install agent-debug
 ```
 
-Requires Python 3.11+ and an Anthropic API key.
+Requires Python 3.11+.
 
 ---
 
-## Quick Start
+## Quickstart
 
-### 1. Capture a trace
+### 1. Set your API key
 
-Save your agent's execution as a JSON file. Supported formats: **OpenAI**, **Claude SDK**, **LangChain**.
+```bash
+# Anthropic (Claude)
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# OpenAI
+export OPENAI_API_KEY=sk-...
+export AGENT_DEBUG_PROVIDER=openai
+
+# DeepSeek (cheapest)
+export DEEPSEEK_API_KEY=sk-...
+export AGENT_DEBUG_PROVIDER=deepseek
+
+# Ollama (local, free)
+export AGENT_DEBUG_PROVIDER=ollama  # no key needed
+```
+
+### 2. Save a trace
+
+Export your agent's execution as a JSON file. Three formats supported:
 
 <details>
-<summary>OpenAI format</summary>
+<summary><b>OpenAI</b> — messages + choices format</summary>
 
 ```json
 {
+  "trace_id": "my-run-001",
   "task_description": "Read report.txt and summarize it",
   "system_prompt": "You are a helpful assistant.",
-  "tool_definitions": [],
-  "messages": [],
-  "choices": [],
+  "tool_definitions": [
+    {
+      "type": "function",
+      "function": {
+        "name": "read_file",
+        "description": "Read a local file by path",
+        "parameters": {
+          "type": "object",
+          "properties": { "path": { "type": "string" } },
+          "required": ["path"]
+        }
+      }
+    }
+  ],
+  "messages": [
+    { "role": "system", "content": "You are a helpful assistant." },
+    { "role": "user", "content": "Read report.txt and summarize it" },
+    {
+      "role": "assistant",
+      "tool_calls": [{
+        "id": "call_1",
+        "type": "function",
+        "function": { "name": "web_search", "arguments": "{\"query\": \"report.txt\"}" }
+      }]
+    },
+    { "role": "tool", "tool_call_id": "call_1", "content": "No results found" }
+  ],
+  "choices": [{ "message": { "role": "assistant", "content": "I couldn't find the file." } }],
   "succeeded": false
 }
 ```
 </details>
 
 <details>
-<summary>Claude SDK format</summary>
+<summary><b>Claude SDK</b> — content blocks format</summary>
 
 ```json
 {
-  "task_description": "List Python files and count lines",
+  "trace_id": "my-run-002",
+  "task_description": "List Python files and count lines in each",
   "system_prompt": "You are a code analysis assistant.",
-  "tool_definitions": [],
-  "messages": [],
-  "final_response": { "stop_reason": "end_turn", "content": [], "usage": {} },
+  "tool_definitions": [{ "name": "bash", "description": "Run a shell command" }],
+  "messages": [
+    { "role": "user", "content": "List Python files and count lines in each" },
+    {
+      "role": "assistant",
+      "content": [{ "type": "tool_use", "id": "tu_1", "name": "bash", "input": { "command": "find /src -name '*.py'" } }]
+    },
+    {
+      "role": "user",
+      "content": [{ "type": "tool_result", "tool_use_id": "tu_1", "content": "/src/main.py\n/src/utils.py" }]
+    },
+    { "role": "assistant", "content": [{ "type": "text", "text": "Found 2 files." }] }
+  ],
+  "final_response": { "stop_reason": "end_turn", "content": [], "usage": { "input_tokens": 450, "output_tokens": 35 } },
   "succeeded": false
 }
 ```
 </details>
 
 <details>
-<summary>LangChain format</summary>
+<summary><b>LangChain</b> — intermediate_steps format</summary>
 
 ```json
 {
-  "task_description": "Get the stock price of AAPL",
-  "input": "Get the stock price of AAPL",
+  "trace_id": "my-run-003",
+  "task_description": "Get the current stock price of AAPL",
+  "input": "Get the current stock price of AAPL",
   "intermediate_steps": [
-    [{"tool": "get_stock_price", "tool_input": "AAPL stock"}, "Error: Invalid ticker"]
+    [{ "tool": "get_stock_price", "tool_input": "AAPL stock" }, "Error: Invalid ticker format"]
   ],
   "output": "The price is $182.50",
   "succeeded": false
@@ -96,21 +152,21 @@ Save your agent's execution as a JSON file. Supported formats: **OpenAI**, **Cla
 ```
 </details>
 
-### 2. Analyze
+### 3. Analyze
 
 ```bash
-export ANTHROPIC_API_KEY=sk-...
-
 agent-debug analyze trace.json
 ```
 
-Save report to file:
-
 ```bash
+# Save report as JSON
 agent-debug analyze trace.json --output report.json
+
+# Print raw JSON
+agent-debug analyze trace.json --json
 ```
 
-### 3. Pre-deploy risk scan
+### Pre-deploy risk scan
 
 Catch problems *before* your agent runs:
 
@@ -118,13 +174,137 @@ Catch problems *before* your agent runs:
 agent-debug scan config.json
 ```
 
-Where `config.json` contains your `system_prompt` and `tool_definitions`.
+`config.json` needs `system_prompt` and/or `tool_definitions`.
+
+---
+
+## GitHub Action
+
+Auto-diagnose agent failures on every PR — no manual trace export needed.
+
+### Setup
+
+**Step 1.** Save your agent's trace to `agent_traces/` during tests:
+
+```python
+# In your test / agent runner:
+import json, pathlib
+
+trace = {
+    "task_description": "...",
+    "messages": [...],
+    "choices": [...],
+    "succeeded": False,
+}
+pathlib.Path("agent_traces").mkdir(exist_ok=True)
+pathlib.Path("agent_traces/my_agent.trace.json").write_text(json.dumps(trace))
+```
+
+**Step 2.** Add to `.github/workflows/agent-test.yml`:
+
+```yaml
+name: Agent Tests
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run agent tests
+        run: pytest tests/
+        continue-on-error: true   # let agent-debug run even if tests fail
+
+      - name: Diagnose agent failures
+        uses: Viktorsdb/agent-debug@main
+        with:
+          api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          provider: anthropic        # or: openai, deepseek
+          traces_dir: agent_traces
+```
+
+**Step 3.** Add your API key as a GitHub secret:
+`Settings → Secrets → Actions → New repository secret`
+
+### What you get on every PR
+
+```
+🤖 agent-debug diagnosis
+File: agent_traces/my_agent.trace.json
+
+🟠 wrong_tool.scope_confusion — severity 3/5 (Medium)
+> The agent stopped before completing all parts of the task.
+Confidence: 95%
+
+🔍 Root Cause
+Failing step: Step 0 (tool_call)
+The agent confused tool scope...
+
+🔧 Suggested Fixes
+Fix #1 — system_prompt 🟢 92% confidence
+Before: "You are a helpful assistant..."
+After:  "...always use read_file for local files, not web_search."
+```
+
+### Action inputs
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `api_key` | ✅ | — | Your LLM API key |
+| `provider` | — | `anthropic` | `anthropic` / `openai` / `deepseek` / `ollama` |
+| `model` | — | provider default | Override model name |
+| `base_url` | — | — | Custom API endpoint (for proxies) |
+| `traces_dir` | — | `agent_traces` | Directory with trace JSON files |
+| `fail_on_severity` | — | `3` | Fail CI if severity ≥ this (0 = never fail) |
+
+---
+
+## Multi-Provider Support
+
+`agent-debug` uses Claude / GPT-4o / DeepSeek / Ollama to run the analysis. Bring your own key.
+
+```bash
+# Anthropic (default)
+ANTHROPIC_API_KEY=sk-ant-...  agent-debug analyze trace.json
+
+# OpenAI
+OPENAI_API_KEY=sk-...  AGENT_DEBUG_PROVIDER=openai  agent-debug analyze trace.json
+
+# DeepSeek — cheapest option (~$0.001/analysis)
+DEEPSEEK_API_KEY=sk-...  AGENT_DEBUG_PROVIDER=deepseek  agent-debug analyze trace.json
+
+# Ollama — completely free, runs locally
+AGENT_DEBUG_PROVIDER=ollama  agent-debug analyze trace.json
+
+# Third-party relay (any OpenAI-compatible endpoint)
+OPENAI_API_KEY=sk-...  OPENAI_BASE_URL=https://my-proxy.com/v1  \
+AGENT_DEBUG_PROVIDER=openai  agent-debug analyze trace.json
+```
+
+### Python API with custom provider
+
+```python
+from agent_debug import DiagnosisPipeline
+from agent_debug.providers import get_provider
+
+# Use any provider
+pipeline = DiagnosisPipeline(provider=get_provider("deepseek"))
+report = pipeline.run(raw_trace_dict)
+
+print(report["classification"]["subcategory"])  # "wrong_tool.scope_confusion"
+print(report["severity"]["severity"])           # 3
+print(report["root_cause"]["root_cause_explanation"])
+for fix in report["fixes"]["suggestions"]:
+    print(f"[{fix['target']}]\nBefore: {fix['before']}\nAfter:  {fix['after']}\n")
+```
 
 ---
 
 ## Failure Taxonomy
 
-`agent-debug` classifies failures into **15 subcategories** across 6 categories:
+15 subcategories across 6 categories:
 
 | Category | Subcategories |
 |----------|--------------|
@@ -139,70 +319,29 @@ Where `config.json` contains your `system_prompt` and `tool_definitions`.
 
 ## How It Works
 
-4 Claude agents run in sequence on your trace:
-
 ```
 trace.json
     │
     ▼
-[Adapter]             Normalize OpenAI / Claude / LangChain → common format
+[Adapter]              Detect format (OpenAI / Claude / LangChain) → normalize
     │
     ▼
-[PatternClassifier]   Classify into 1 of 15 subcategories
+[PatternClassifier]    Classify into 1 of 15 subcategories
     │
     ▼
-[SeverityEstimator]   Rate severity 1–5
+[SeverityEstimator]    Rate severity 1–5
     │
     ▼
-[RootCauseAnalyst]    Pinpoint the exact failing step + explain why
+[RootCauseAnalyst]     Pinpoint the exact failing step + explain why
     │
     ▼
-[FixGenerator]        Generate before/after diffs for prompt/tool fixes
+[FixGenerator]         Generate before/after diffs for prompt/tool fixes
     │
     ▼
-DiagnosisReport
+DiagnosisReport  →  terminal / JSON / GitHub PR comment
 ```
 
-Typical runtime: ~15 seconds. Typical cost: $0.02–$0.05 per trace.
-
----
-
-## Python API
-
-```python
-from agent_debug import DiagnosisPipeline
-
-pipeline = DiagnosisPipeline()
-report = pipeline.run(raw_trace_dict)
-
-print(report["classification"]["subcategory"])   # e.g. "wrong_tool.scope_confusion"
-print(report["severity"]["severity"])            # e.g. 3
-print(report["root_cause"]["root_cause_explanation"])
-for fix in report["fixes"]["suggestions"]:
-    print(fix["before"], "→", fix["after"])
-```
-
-### Custom base URL (third-party Claude API)
-
-```python
-import anthropic
-from agent_debug import DiagnosisPipeline
-
-client = anthropic.Anthropic(
-    api_key="sk-...",
-    base_url="https://your-proxy.example.com/claude",
-)
-pipeline = DiagnosisPipeline(client=client)
-report = pipeline.run(trace)
-```
-
-Or via environment variables:
-
-```bash
-export ANTHROPIC_API_KEY=sk-...
-export ANTHROPIC_BASE_URL=https://your-proxy.example.com/claude
-agent-debug analyze trace.json
-```
+Typical runtime: ~15 seconds. Typical cost: $0.01–$0.05 per trace.
 
 ---
 
@@ -212,10 +351,10 @@ agent-debug analyze trace.json
 git clone https://github.com/Viktorsdb/agent-debug
 cd agent-debug
 uv sync
-uv run pytest tests/test_adapters/ tests/test_agents/ -v
+uv run pytest tests/ -v
 ```
 
-Tests run without an API key (adapters and base agent logic are fully deterministic).
+Tests run without any API key — adapters and base agent logic are fully deterministic.
 
 ---
 
