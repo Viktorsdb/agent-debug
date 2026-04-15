@@ -14,7 +14,7 @@ from typing import Any
 from agent_debug.providers.base import LLMProvider
 from agent_debug.providers import get_provider
 
-TIMEOUT_SECONDS = 30
+TIMEOUT_SECONDS = 120
 
 # Fallback cost estimate (claude-sonnet-4-6 pricing)
 COST_PER_INPUT_TOKEN = 0.000003

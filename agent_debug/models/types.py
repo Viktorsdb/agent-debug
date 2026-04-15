@@ -129,11 +129,15 @@ class FixInput(TypedDict):
 
 
 class FixSuggestion(TypedDict):
-    target: Literal["system_prompt", "tool_definition", "tool_description", "retrieval_setup"]
+    target: Literal["system_prompt", "tool_definition", "tool_description", "retrieval_setup", "code"]
     before: str
     after: str
     explanation: str               # why this change addresses the root cause
     confidence: float
+
+
+class CodeFixSuggestion(FixSuggestion):
+    file_hint: str                 # suggested filename to patch, e.g. "agent.py"
 
 
 class FixOutput(TypedDict):

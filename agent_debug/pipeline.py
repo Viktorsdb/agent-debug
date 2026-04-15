@@ -52,8 +52,22 @@ class DiagnosisPipeline:
         trace = auto_parse(raw)
         return self.run_normalized(trace)
 
-    def run_normalized(self, trace: NormalizedTrace) -> DiagnosisReport:
-        """Run pipeline on a pre-normalized trace."""
+    def run_normalized(
+        self,
+        trace: NormalizedTrace,
+        file_contents: dict[str, str] | None = None,
+        test_failures: str = "",
+    ) -> DiagnosisReport:
+        """Run pipeline on a pre-normalized trace.
+
+        Args:
+            trace:         Normalized trace to analyze.
+            file_contents: Optional mapping of filename → file text.
+                           Passed to FixGenerator so it can produce
+                           "before" strings that match actual file content.
+            test_failures: Full pytest failure output from a pre-flight test run.
+                           Passed to FixGenerator to generate per-test fixes.
+        """
         total_cost = 0.0
 
         classification = self.classifier.classify(ClassifierInput(trace=trace))
@@ -78,7 +92,9 @@ class DiagnosisPipeline:
                 trace=trace,
                 classification=classification,
                 root_cause=root_cause,
-            )
+            ),
+            file_contents=file_contents,
+            test_failures=test_failures,
         )
         total_cost += self.fix_gen.last_cost_usd
 

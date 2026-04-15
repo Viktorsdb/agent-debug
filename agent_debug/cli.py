@@ -83,6 +83,14 @@ def fix(
         Optional[Path],
         typer.Option("--tools", "-t", help="Tool definitions file to patch (.json)"),
     ] = None,
+    code: Annotated[
+        Optional[list[Path]],
+        typer.Option("--code", "-c", help="Code file(s) to patch (.py). Can be specified multiple times."),
+    ] = None,
+    test_cmd: Annotated[
+        Optional[str],
+        typer.Option("--test-cmd", "-T", help="Test command to run after each fix (e.g. 'pytest tests/')"),
+    ] = None,
 ) -> None:
     """Diagnose a failed trace, then interactively apply fix suggestions.
 
@@ -93,6 +101,7 @@ def fix(
         agent-debug fix trace.json --system-prompt prompts/system.txt
         agent-debug fix trace.json --tools tools.json
         agent-debug fix trace.json --system-prompt system.txt --tools tools.json
+        agent-debug fix trace.json --code agent.py --test-cmd "pytest tests/"
     """
     if not trace_file.exists():
         err_console.print(f"[red]Error:[/red] File not found: {trace_file}")
@@ -105,14 +114,115 @@ def fix(
         err_console.print(f"[red]Error:[/red] Invalid JSON in {trace_file}: {e}")
         raise typer.Exit(1)
 
+    # Determine step count based on whether --test-cmd is provided
+    has_test_cmd = bool(test_cmd)
+    has_files = bool(code or system_prompt)
+    run_preflight = has_test_cmd and has_files
+    has_code_fixer = run_preflight and bool(code)
+    total_steps = 4 if has_code_fixer else (4 if run_preflight else 3)
+
     # ── Step 1: Run analysis ──────────────────────────────────────────────
     console.print()
-    console.print("[bold]Step 1/3 — Analyzing trace...[/bold]")
+    console.print(f"[bold]Step 1/{total_steps} — Analyzing trace...[/bold]")
+
+    # Collect actual file contents so FixGenerator can produce exact "before" strings
+    file_contents: dict[str, str] = {}
+    _seen: set[str] = set()
+    for _fp in [system_prompt] + list(code or []):
+        if _fp and _fp.exists() and str(_fp) not in _seen:
+            file_contents[_fp.name] = _fp.read_text()
+            _seen.add(str(_fp))
+
+    from agent_debug.adapters import auto_parse
+    from agent_debug.pipeline import DiagnosisPipeline
+    from agent_debug.agents.code_validator import CodeValidator
 
     try:
-        from agent_debug.pipeline import DiagnosisPipeline
+        trace = auto_parse(raw)
+    except (ValueError, RuntimeError) as e:
+        err_console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+    # ── Step 2 (optional): Pre-flight test run ────────────────────────────
+    preflight_failures: str = ""
+    if run_preflight:
+        console.print()
+        console.print(f"[bold]Step 2/{total_steps} — Running tests to identify failures...[/bold]")
+        validator = CodeValidator()
+        preflight = validator.run(test_cmd)  # type: ignore[arg-type]
+        if preflight["passed"]:
+            console.print("[green]✓ All tests passing — no code fixes needed[/green]")
+            raise typer.Exit(0)
+        else:
+            # Show last 50 lines of pre-flight output
+            output_lines = preflight["output"].splitlines()
+            tail = "\n".join(output_lines[-50:]) if output_lines else "(no output)"
+            console.print(
+                Panel(
+                    tail,
+                    title="[red]Pre-flight Test Results[/red]",
+                    border_style="red",
+                )
+            )
+            # Count failures
+            import re as _re
+            fail_match = _re.search(r"(\d+) failed", preflight["output"])
+            fail_count = fail_match.group(1) if fail_match else "some"
+            console.print(f"[red]{fail_count} test(s) failed — generating targeted fixes...[/red]")
+            preflight_failures = preflight["output"]
+
+    # ── Step 3 (optional): Fix code files with CodeFixer ─────────────────
+    code_fixer_patches: list[tuple] = []  # (file, original_content)
+    if has_code_fixer and preflight_failures:
+        from agent_debug.agents.code_fixer import CodeFixer
+        console.print()
+        console.print(f"[bold]Step 3/{total_steps} — Fix code files[/bold]")
+        root_cause_explanation_early = ""  # will be filled after pipeline; use empty for now
+
+        for code_file in (code or []):
+            if not code_file.exists():
+                console.print(f"[yellow]Skipping {code_file} — file not found[/yellow]")
+                continue
+
+            console.print()
+            console.print(f"[bold]Fixing {code_file.name}...[/bold]")
+            try:
+                cf = CodeFixer()
+                result = cf.fix_file(code_file, preflight_failures)
+            except (ValueError, RuntimeError) as _e:
+                console.print(f"[red]CodeFixer failed for {code_file.name}: {_e}[/red]")
+                continue
+
+            console.print(f"[dim]{result.changes_summary}[/dim]")
+            console.print()
+            choice = typer.prompt(
+                f"Apply these fixes to {code_file.name}?",
+                default="n",
+                show_choices=True,
+                prompt_suffix=" [y/n] ",
+            ).strip().lower()
+
+            if choice == "y":
+                original_content = code_file.read_text()
+                try:
+                    code_file.write_text(result.fixed_content)
+                    console.print(f"[green]✓ {code_file.name} updated[/green]")
+                    code_fixer_patches.append((code_file, original_content))
+                    # Refresh file_contents for the pipeline
+                    file_contents[code_file.name] = result.fixed_content
+                except OSError as _oe:
+                    console.print(f"[red]Failed to write {code_file.name}: {_oe}[/red]")
+            else:
+                console.print(f"[dim]Skipped {code_file.name}.[/dim]")
+
+    # ── Run analysis pipeline ─────────────────────────────────────────────
+    try:
         pipeline = DiagnosisPipeline()
-        report = pipeline.run(raw)
+        report = pipeline.run_normalized(
+            trace,
+            file_contents=file_contents or None,
+            test_failures=preflight_failures,
+        )
     except (ValueError, RuntimeError) as e:
         err_console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(1)
@@ -123,9 +233,10 @@ def fix(
     fixes = report["fixes"]
     suggestions = fixes.get("suggestions", [])
 
-    # ── Step 2: Show failure reason ───────────────────────────────────────
+    # ── Step 3 or 4: Show failure reason ──────────────────────────────────
+    diagnosis_step = 4 if has_code_fixer else (3 if run_preflight else 2)
     console.print()
-    console.print("[bold]Step 2/3 — Failure diagnosis[/bold]")
+    console.print(f"[bold]Step {diagnosis_step}/{total_steps} — Apply prompt fixes[/bold]")
     console.print()
 
     sev_val = severity["severity"]
@@ -157,20 +268,24 @@ def fix(
         console.print("[yellow]No fix suggestions generated.[/yellow]")
         raise typer.Exit(0)
 
-    # ── Step 3: Interactive fix application ───────────────────────────────
+    # ── Interactive fix application ───────────────────────────────────────
+    apply_step = diagnosis_step
     console.print()
-    console.print(f"[bold]Step 3/3 — Apply fixes[/bold] ({len(suggestions)} suggestion(s))")
-    console.print(f"[dim]Files: system_prompt={system_prompt or '(none)'}  tools={tools or '(none)'}[/dim]")
+    console.print(f"[bold]Step {apply_step}/{total_steps} — Apply fixes[/bold] ({len(suggestions)} suggestion(s))")
+    console.print(f"[dim]Files: system_prompt={system_prompt or '(none)'}  tools={tools or '(none)'}  code={[str(p) for p in (code or [])] or '(none)'}[/dim]")
+    console.print(f"[dim]test: {test_cmd or '(none — add --test-cmd to validate)'}[/dim]")
     console.print()
 
     from agent_debug.agents.auto_fixer import AutoFixer
     fixer = AutoFixer(
         system_prompt_file=system_prompt,
         tools_file=tools,
+        code_files=list(code) if code else None,
     )
 
     applied_count = 0
     skipped_count = 0
+    applied_patches: list[tuple] = []  # (file, original_content, fix_num)
 
     for i, suggestion in enumerate(suggestions, 1):
         conf_color = "green" if suggestion["confidence"] >= 0.7 else "yellow"
@@ -197,7 +312,7 @@ def fix(
         else:
             console.print(
                 "[yellow]No target file configured for this fix type. "
-                "Pass --system-prompt or --tools to auto-apply.[/yellow]"
+                "Pass --system-prompt, --tools, or --code to auto-apply.[/yellow]"
             )
 
         # Human confirmation
@@ -213,18 +328,20 @@ def fix(
             console.print("[dim]Stopped at user request.[/dim]")
             break
         elif choice == "y":
-            result = fixer.apply(suggestion)
-            if result == "applied":
+            apply_result = fixer.apply(suggestion)
+            if apply_result.status == "applied":
                 console.print(f"[green]✓ Fix #{i} applied to {target_file}[/green]")
                 applied_count += 1
-            elif result == "no_file":
+                # Track for possible revert at end
+                applied_patches.append((target_file, apply_result.original_content, i))
+            elif apply_result.status == "no_file":
                 console.print(
                     f"[yellow]✗ Could not apply Fix #{i} — "
                     "text not found in file or no file specified.[/yellow]"
                 )
                 _print_manual_instructions(suggestion)
                 skipped_count += 1
-            elif result == "error":
+            elif apply_result.status == "error":
                 console.print(f"[red]✗ Failed to write {target_file}[/red]")
                 skipped_count += 1
         else:
@@ -233,12 +350,58 @@ def fix(
 
         console.print()
 
+    # ── Final batch test (run ONCE after all fixes applied) ───────────────
+    total_applied = applied_count + len(code_fixer_patches)
+    if test_cmd and total_applied > 0:
+        console.print()
+        console.print(f"[bold]Running final tests on all {total_applied} applied fix(es)...[/bold]")
+        final_validation = CodeValidator().run(test_cmd)
+        if final_validation["passed"]:
+            console.print(
+                f"[green]✓ All tests passed ({final_validation['duration_sec']:.1f}s) — fixes verified![/green]"
+            )
+        else:
+            output_lines = final_validation["output"].splitlines()
+            tail = "\n".join(output_lines[-30:]) if output_lines else "(no output)"
+            console.print(
+                Panel(tail, title="[red]Final Test Results[/red]", border_style="red")
+            )
+            # Count remaining failures
+            import re as _re2
+            fm = _re2.search(r"(\d+) failed", final_validation["output"])
+            remaining = fm.group(1) if fm else "some"
+            console.print(f"[yellow]{remaining} test(s) still failing.[/yellow]")
+            revert_all = typer.prompt(
+                "Revert ALL applied fixes?",
+                default="n",
+                prompt_suffix=" [y/n] ",
+            ).strip().lower()
+            if revert_all == "y":
+                for patch_file, original, fix_num in applied_patches:
+                    if patch_file and original and fixer.revert(patch_file, original):
+                        console.print(f"[yellow]↩ Fix #{fix_num} reverted[/yellow]")
+                for patch_file, original in code_fixer_patches:
+                    if patch_file and original and fixer.revert(patch_file, original):
+                        console.print(f"[yellow]↩ CodeFixer patch reverted for {patch_file.name}[/yellow]")
+                applied_count = 0
+        console.print()
+
     # ── Summary ───────────────────────────────────────────────────────────
+    code_fixed = len(code_fixer_patches)
+    total_applied = code_fixed + applied_count
+    summary_lines = []
+    if code_fixed:
+        summary_lines.append(f"[green]Code fixes: {code_fixed} file(s) rewritten[/green]")
+    if applied_count:
+        summary_lines.append(f"[green]Prompt fixes: {applied_count} applied[/green]")
+    if not total_applied:
+        summary_lines.append(f"[yellow]Applied: 0[/yellow]")
+    summary_lines.append(f"[dim]Skipped: {skipped_count}[/dim]")
+    summary_lines.append(f"\n[dim italic]{fixes['disclaimer']}[/dim italic]")
+
     console.print(
         Panel(
-            f"[green]Applied: {applied_count}[/green]  "
-            f"[dim]Skipped: {skipped_count}[/dim]\n\n"
-            f"[dim italic]{fixes['disclaimer']}[/dim italic]",
+            "\n".join(summary_lines),
             title="[bold]Done[/bold]",
             border_style="dim",
         )
